@@ -154,7 +154,7 @@ const App: React.FC = () => {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 ${
+                className={`flex items-center gap-1.5 px-3 md:px-4 py-2 rounded-full text-xs md:text-sm font-medium transition-all duration-200 shrink-0 ${
                   activeTab === tab.id 
                     ? 'bg-slate-800 text-white shadow-md' 
                     : 'text-slate-500 hover:bg-slate-100 hover:text-slate-700'

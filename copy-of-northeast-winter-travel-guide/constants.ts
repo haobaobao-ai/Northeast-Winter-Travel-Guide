@@ -30,7 +30,7 @@ export const INITIAL_DATA: Record<string, TravelSection> = {
         content: '位置优势：位于“老道外”，出门就是中华巴洛克风情街。这里是哈尔滨的发源地，美食极多，且比中央大街更具烟火气。',
         tags: ['住宿', '老道外'],
         type: 'hotel',
-        imageUrl: 'https://images.unsplash.com/photo-1542314831-068cd1dbfeeb?auto=format&fit=crop&w=800&q=80'
+        imageUrl: 'https://images.unsplash.com/photo-1681282245974-2735234327f1?auto=format&fit=crop&w=800&q=80'
       },
       {
         id: 'h-d1',
@@ -38,7 +38,7 @@ export const INITIAL_DATA: Record<string, TravelSection> = {
         time: '2月7日 (周六)',
         content: '14:19 抵达哈西，打车/地铁前往酒店办理入住。\n16:00 就在楼下逛【中华巴洛克风情街】，看百年老建筑的夜景。\n17:30 晚餐就在附近吃：张包铺（排骨包）、富强大骨棒或老鼎丰糕点。\n晚上：早点休息，适应气温。',
         type: 'itinerary',
-        imageUrl: 'https://images.unsplash.com/photo-1681282245974-2735234327f1?auto=format&fit=crop&w=800&q=80'
+        imageUrl: 'https://images.unsplash.com/photo-1542314831-068cd1dbfeeb?auto=format&fit=crop&w=800&q=80'
       },
       {
         id: 'h-d2',
