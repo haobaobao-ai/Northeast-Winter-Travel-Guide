@@ -15,6 +15,9 @@ export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate }) =>
   const [editTime, setEditTime] = useState(item.time || '');
   const [editImage, setEditImage] = useState(item.imageUrl || '');
   
+  // 新增：图片加载错误状态
+  const [imgError, setImgError] = useState(false);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -23,7 +26,13 @@ export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate }) =>
     setEditSubtitle(item.subtitle || '');
     setEditTime(item.time || '');
     setEditImage(item.imageUrl || '');
+    setImgError(false); // 重置错误状态
   }, [item]);
+
+  // 当图片地址改变时，重置错误状态
+  useEffect(() => {
+    setImgError(false);
+  }, [editImage]);
 
   const handleSave = () => {
     onUpdate(item.id, {
@@ -42,6 +51,7 @@ export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate }) =>
     setEditSubtitle(item.subtitle || '');
     setEditTime(item.time || '');
     setEditImage(item.imageUrl || '');
+    setImgError(false);
     setIsEditing(false);
   };
 
@@ -51,6 +61,7 @@ export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate }) =>
       const reader = new FileReader();
       reader.onloadend = () => {
         setEditImage(reader.result as string);
+        setImgError(false);
       };
       reader.readAsDataURL(file);
     }
@@ -81,16 +92,19 @@ export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate }) =>
 
       {/* Image Section - Fixed Width for compactness */}
       <div className="relative w-32 md:w-40 shrink-0 bg-slate-100 flex items-center justify-center overflow-hidden border-r border-slate-100">
-        {editImage ? (
+        {editImage && !imgError ? (
           <img 
             src={editImage} 
             alt={item.title} 
             className="w-full h-full object-cover absolute inset-0"
+            onError={() => setImgError(true)}
           />
         ) : (
           <div className="flex flex-col items-center justify-center text-slate-400 p-2 text-center">
             <ImageIcon className="w-8 h-8 mb-1 opacity-50" />
-            <span className="text-[10px]">暂无图片</span>
+            <span className="text-[10px]">
+                {imgError ? '加载失败' : '暂无图片'}
+            </span>
           </div>
         )}
         
@@ -102,7 +116,7 @@ export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate }) =>
           >
             <div className="flex flex-col items-center text-white">
               <Upload className="w-6 h-6 mb-1" />
-              <span className="text-xs font-medium">点击更换图片</span>
+              <span className="text-xs font-medium">更换图片</span>
             </div>
           </div>
         )}
