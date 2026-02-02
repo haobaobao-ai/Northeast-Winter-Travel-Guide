@@ -19,7 +19,7 @@ const App: React.FC = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // 使用 maybeSingle() 避免找不到行时报错
+        // 尝试获取数据
         const { data: remoteData, error } = await supabase
           .from('travel_plans')
           .select('data')
@@ -29,14 +29,14 @@ const App: React.FC = () => {
         if (error) throw error;
 
         if (!remoteData) {
-          // 关键修复：如果数据库里没有这个 PLAN_ID，则插入一条新数据！
-          // 这样既解决了同步失败问题，又让 PLAN_ID = 2 生效
-          console.log('Creating new plan in DB...');
+          // 如果数据不存在，尝试初始化
+          console.log('No data found, initializing...');
           const { error: insertError } = await supabase
             .from('travel_plans')
-            .insert({ id: PLAN_ID, data: INITIAL_DATA });
+            .upsert({ id: PLAN_ID, data: INITIAL_DATA }); // 使用 upsert 更安全
           
           if (insertError) throw insertError;
+          // 保持当前默认数据
           setSyncStatus('synced');
         } else if (remoteData.data) {
           // 兼容旧数据结构（如果没有 sections 字段，说明是旧结构）
@@ -56,16 +56,19 @@ const App: React.FC = () => {
 
     fetchData();
 
+    // 监听所有类型的事件 (INSERT, UPDATE) 以防止错过数据创建
     const subscription = supabase
       .channel('public:travel_plans')
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'travel_plans', filter: `id=eq.${PLAN_ID}` }, (payload) => {
-        if (payload.new && payload.new.data) {
-          console.log('Remote change received!', payload.new.data);
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'travel_plans', filter: `id=eq.${PLAN_ID}` }, (payload) => {
+        if (payload.new && (payload.new as any).data) {
+          console.log('Remote change received!', (payload.new as any).data);
+          const newData = (payload.new as any).data;
+          
           // 同样兼容旧数据
-          if (!payload.new.data.sections) {
-             setData({ heroImage: INITIAL_DATA.heroImage, sections: payload.new.data });
+          if (!newData.sections) {
+             setData({ heroImage: INITIAL_DATA.heroImage, sections: newData });
           } else {
-             setData(payload.new.data);
+             setData(newData);
           }
         }
       })
@@ -76,15 +79,15 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // 通用保存函数
+  // 通用保存函数 - 核心修改：使用 upsert
   const saveData = async (newData: TravelData) => {
     setData(newData);
     setSyncStatus('saving');
     try {
+      // 使用 upsert：如果 ID 存在则更新，不存在则插入
       const { error } = await supabase
         .from('travel_plans')
-        .update({ data: newData })
-        .eq('id', PLAN_ID);
+        .upsert({ id: PLAN_ID, data: newData });
 
       if (error) throw error;
       setSyncStatus('synced');
