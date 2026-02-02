@@ -10,5 +10,6 @@ const SUPABASE_ANON_KEY = 'sb_publishable__mEJwAPbyyH5sKWKV88cew_ADH7vlNp';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// 修改为 3，确保启用带有“详情页”和“高德地图”的新数据结构
-export const PLAN_ID = 3;
+// 回退到 1，因为这一行数据在数据库里已经存在，可以被“更新(Update)”。
+// 如果用新的 ID (如 3)，数据库可能会因为权限设置拒绝“创建(Insert)”新行。
+export const PLAN_ID = 1;
