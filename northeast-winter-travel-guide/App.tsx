@@ -3,128 +3,150 @@ import { createRoot } from 'react-dom/client';
 import { INITIAL_DATA } from './constants';
 import { TabId, TravelItem, TravelData } from './types';
 import { EditableCard } from './components/EditableCard';
-import { Plane, Snowflake, MapPin, Heart, Printer, Share2, X, Globe, AlertCircle, Cloud, RefreshCw, Save, Plus, Camera, WifiOff } from 'lucide-react';
-import { supabase, PLAN_ID } from './supabaseClient';
+import { Plane, Snowflake, MapPin, Heart, Printer, Share2, X, Globe, AlertCircle, Cloud, RefreshCw, Save, Plus, Camera, WifiOff, Loader2 } from 'lucide-react';
+import { supabase } from './supabaseClient'; // 移除 PLAN_ID 引用
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabId>('prep');
   const [data, setData] = useState<TravelData>(INITIAL_DATA);
+  const [planId, setPlanId] = useState<number | string | null>(null); // 动态存储从数据库获取的 ID
+  
   const [showPrintHint, setShowPrintHint] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
   
   const [syncStatus, setSyncStatus] = useState<'idle' | 'saving' | 'synced' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isInitializing, setIsInitializing] = useState(true);
   
   const heroInputRef = useRef<HTMLInputElement>(null);
 
-  // 初始化加载
+  // 初始化：寻找或创建存档
   useEffect(() => {
-    const fetchData = async () => {
+    const initSession = async () => {
       try {
-        setSyncStatus('saving'); // 显示加载状态
-        const { data: remoteData, error } = await supabase
+        setSyncStatus('saving');
+        
+        // 1. 尝试获取最新的一个存档（按 ID 倒序，取最大的那个）
+        const { data: existingRows, error: fetchError } = await supabase
           .from('travel_plans')
-          .select('data')
-          .eq('id', PLAN_ID)
-          .maybeSingle();
+          .select('id, data')
+          .order('id', { ascending: false })
+          .limit(1);
 
-        if (error) throw error;
+        if (fetchError) throw fetchError;
 
-        if (remoteData && remoteData.data) {
-          console.log('Remote data found:', remoteData.data);
-          
-          // --- 核心：数据结构自动升级逻辑 ---
-          // 检查是否是旧数据（没有 sections 字段，或者是旧的数组结构）
-          if (!remoteData.data.sections) {
-             console.log('Migrating old data structure to new format...');
-             // 假定旧数据就是 sections 对象本身（旧版本逻辑）
-             const migratedData: TravelData = {
-                heroImage: INITIAL_DATA.heroImage,
-                sections: remoteData.data as any 
-             };
-             // 立即保存升级后的结构，修复数据库
-             saveData(migratedData); 
-          } else {
-             // 数据结构正常，直接使用
-             setData(remoteData.data);
-             setSyncStatus('synced');
-          }
+        let currentId: number | string;
+        let currentData: TravelData;
+
+        if (existingRows && existingRows.length > 0) {
+          // A. 找到了现有存档 -> 使用它
+          console.log('Found existing plan:', existingRows[0]);
+          currentId = existingRows[0].id;
+          currentData = existingRows[0].data;
         } else {
-          // 如果数据库里完全没有 ID=1 的数据，尝试初始化
-          // 注意：如果 RLS 禁止 Insert，这步会失败，但会抛出 error 被 catch 捕获显示出来
-          console.log('No data found, attempting to initialize...');
-          const { error: insertError } = await supabase
+          // B. 没找到存档 -> 创建新的 (注意：不传 ID，让数据库自动生成)
+          console.log('No plan found, creating new one...');
+          const { data: newRow, error: insertError } = await supabase
             .from('travel_plans')
-            .upsert({ id: PLAN_ID, data: INITIAL_DATA });
+            .insert({ data: INITIAL_DATA })
+            .select() // 返回新创建的行
+            .single();
           
           if (insertError) throw insertError;
-          setSyncStatus('synced');
+          
+          console.log('Created new plan:', newRow);
+          currentId = newRow.id;
+          currentData = newRow.data;
         }
+
+        // 数据结构兼容性检查
+        if (currentData && !currentData.sections) {
+           console.log('Migrating data format...');
+           currentData = {
+              heroImage: INITIAL_DATA.heroImage,
+              sections: currentData as any 
+           };
+           // 顺便把升级后的数据写回去，防止下次还要升级
+           await supabase.from('travel_plans').update({ data: currentData }).eq('id', currentId);
+        }
+
+        setPlanId(currentId);
+        setData(currentData || INITIAL_DATA);
+        setSyncStatus('synced');
+        setErrorMessage(null);
+
       } catch (error: any) {
-        console.error('Error fetching/initializing data:', error);
+        console.error('Initialization error:', error);
         setSyncStatus('error');
-        setErrorMessage(error.message || '连接数据库失败，请检查网络或配置');
+        setErrorMessage(error.message || '初始化失败，请刷新重试');
+        // 出错时保留本地初始数据，让用户至少能看
+      } finally {
+        setIsInitializing(false);
       }
     };
 
-    fetchData();
+    initSession();
+  }, []);
 
-    // 实时监听逻辑
+  // 实时同步监听
+  useEffect(() => {
+    if (!planId) return; // 只有拿到 ID 后才开始监听
+
+    console.log(`Subscribing to plan:${planId}`);
     const subscription = supabase
-      .channel(`room:${PLAN_ID}`) // 使用唯一频道名
+      .channel(`plan:${planId}`)
       .on('postgres_changes', { 
-          event: '*', 
+          event: '*', // 监听所有事件
           schema: 'public', 
           table: 'travel_plans', 
-          filter: `id=eq.${PLAN_ID}` 
+          filter: `id=eq.${planId}` 
       }, (payload) => {
         if (payload.new && (payload.new as any).data) {
-          console.log('Remote change received!', (payload.new as any).data);
+          console.log('Remote update received:', (payload.new as any).data);
           const newData = (payload.new as any).data;
           
-          // 接收端也做一次兼容性检查
+          // 接收端也做一次简单兼容
           if (!newData.sections) {
              setData({ heroImage: INITIAL_DATA.heroImage, sections: newData });
           } else {
              setData(newData);
           }
-          // 收到更新，状态设为已同步
           setSyncStatus('synced');
         }
       })
-      .subscribe((status) => {
-         if (status === 'SUBSCRIBED') {
-             console.log('Realtime connected!');
-         }
-      });
+      .subscribe();
 
     return () => {
       supabase.removeChannel(subscription);
     };
-  }, []);
+  }, [planId]);
 
-  // 通用保存函数
+  // 保存数据
   const saveData = async (newData: TravelData) => {
-    // 1. 乐观更新：先改本地，让用户觉得快
+    // 乐观更新
     setData(newData);
     setSyncStatus('saving');
     setErrorMessage(null);
 
+    // 如果还没有 ID (正在初始化中)，暂时只更新本地，不发请求，防止报错
+    if (!planId) {
+        console.warn('Cannot save to cloud yet, no planId');
+        return;
+    }
+
     try {
-      // 2. 发送到云端
+      // 使用 UPDATE，因为我们已经确保 ID 存在了
       const { error } = await supabase
         .from('travel_plans')
-        .upsert({ id: PLAN_ID, data: newData });
+        .update({ data: newData })
+        .eq('id', planId);
 
       if (error) throw error;
-      
-      // 3. 成功
       setSyncStatus('synced');
     } catch (error: any) {
-      console.error('Error syncing:', error);
+      console.error('Save error:', error);
       setSyncStatus('error');
-      // 4. 失败时明确告知用户
-      setErrorMessage(`保存失败: ${error.message || '权限不足或网络断开'}`);
+      setErrorMessage(`同步失败: ${error.message}`);
     }
   };
 
@@ -194,12 +216,21 @@ const App: React.FC = () => {
 
   const currentSection = data.sections[activeTab];
 
+  if (isInitializing) {
+    return (
+        <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-500 gap-4">
+            <Loader2 className="w-10 h-10 animate-spin text-ice-500" />
+            <p className="text-sm font-medium">正在连接云端行程库...</p>
+        </div>
+    );
+  }
+
   return (
     <div className="min-h-screen pb-20 bg-slate-50">
       
-      {/* 错误提示条 - 只有出错时显示 */}
+      {/* Error Banner */}
       {errorMessage && (
-        <div className="bg-red-500 text-white text-sm py-2 px-4 text-center font-bold sticky top-0 z-[100] flex items-center justify-center gap-2 shadow-md">
+        <div className="bg-red-500 text-white text-sm py-2 px-4 text-center font-bold sticky top-0 z-[100] flex items-center justify-center gap-2 shadow-md animate-in slide-in-from-top">
             <WifiOff className="w-4 h-4" />
             {errorMessage}
         </div>
