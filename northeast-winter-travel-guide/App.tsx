@@ -3,8 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { INITIAL_DATA } from './constants';
 import { TabId, TravelItem, TravelData } from './types';
 import { EditableCard } from './components/EditableCard';
-import { Plane, Snowflake, MapPin, Heart, Printer, Share2, X, Globe, AlertCircle, Cloud, RefreshCw, Save, Plus, Camera, WifiOff, Loader2, Info, Settings, Database } from 'lucide-react';
-import { supabase, updateSupabaseConfig, resetSupabaseConfig, getCurrentConfig } from './supabaseClient';
+import { Plane, Snowflake, MapPin, Heart, Printer, Share2, X, Globe, AlertCircle, Cloud, RefreshCw, Save, Plus, Camera, WifiOff, Loader2 } from 'lucide-react';
+import { supabase } from './supabaseClient';
 
 const LS_KEY_DATA = 'travel_plan_data';
 const LS_KEY_ID = 'travel_plan_id';
@@ -28,17 +28,10 @@ const App: React.FC = () => {
 
   const [showPrintHint, setShowPrintHint] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
-  const [showConfigModal, setShowConfigModal] = useState(false);
-  const [showErrorDetail, setShowErrorDetail] = useState(false);
-  
+
   const [syncStatus, setSyncStatus] = useState<'idle' | 'saving' | 'synced' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [errorDetail, setErrorDetail] = useState<string | null>(null);
   const [isFirstLoad, setIsFirstLoad] = useState(true);
-  
-  // Config Form State
-  const [configUrl, setConfigUrl] = useState(getCurrentConfig().url);
-  const [configKey, setConfigKey] = useState(getCurrentConfig().key);
 
   const heroInputRef = useRef<HTMLInputElement>(null);
 
@@ -113,7 +106,6 @@ const App: React.FC = () => {
 
       setSyncStatus('synced');
       setErrorMessage(null);
-      setErrorDetail(null);
 
     } catch (error: any) {
       console.error('Fetch error:', error);
@@ -127,7 +119,6 @@ const App: React.FC = () => {
       if (msg.includes('relation') || msg.code === '42P01') friendlyMsg = '数据库表不存在';
       
       setErrorMessage(`${friendlyMsg} (离线模式)`);
-      setErrorDetail(JSON.stringify(error, null, 2));
     } finally {
         setIsFirstLoad(false);
     }
@@ -210,8 +201,7 @@ const App: React.FC = () => {
     } catch (error: any) {
       console.error('Save failed:', error);
       setSyncStatus('error');
-      setErrorMessage('保存失败 (请检查配置)');
-      setErrorDetail(error.message || 'Unknown error');
+      setErrorMessage('保存失败，请检查网络连接');
     }
   };
 
@@ -267,10 +257,6 @@ const App: React.FC = () => {
     setTimeout(() => { window.print(); setShowPrintHint(false); }, 500);
   };
 
-  const handleSaveConfig = () => {
-      updateSupabaseConfig(configUrl, configKey);
-  };
-
   const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
     { id: 'prep', label: '行前准备', icon: <Plane className="w-3.5 h-3.5" /> },
     { id: 'harbin', label: '哈尔滨', icon: <Snowflake className="w-3.5 h-3.5" /> },
@@ -293,27 +279,10 @@ const App: React.FC = () => {
     <div className="min-h-screen pb-20 bg-slate-50">
       
       {errorMessage && (
-        <div className="bg-red-500 text-white text-sm py-2 px-4 text-center font-bold sticky top-0 z-[100] shadow-md flex items-center justify-between animate-in slide-in-from-top">
-            <div className="flex items-center gap-2">
-                <WifiOff className="w-4 h-4" />
-                <span>{errorMessage}</span>
-            </div>
-            <div className="flex gap-2">
-                <button onClick={() => setShowConfigModal(true)} className="text-xs bg-white/20 px-2 py-1 rounded hover:bg-white/30 flex items-center gap-1">
-                    <Settings className="w-3 h-3" /> 配置
-                </button>
-                <button onClick={() => setShowErrorDetail(!showErrorDetail)} className="text-xs bg-white/20 px-2 py-1 rounded hover:bg-white/30">
-                    <Info className="w-3 h-3" />
-                </button>
-            </div>
+        <div className="bg-red-500 text-white text-sm py-2 px-4 text-center font-bold sticky top-0 z-[100] shadow-md flex items-center justify-center gap-2 animate-in slide-in-from-top">
+            <WifiOff className="w-4 h-4" />
+            <span>{errorMessage}</span>
         </div>
-      )}
-      
-      {showErrorDetail && errorDetail && (
-          <div className="bg-red-50 p-4 border-b border-red-100 text-xs font-mono text-red-800 break-all">
-              <p className="font-bold mb-1">错误详情:</p>
-              {errorDetail}
-          </div>
       )}
 
       {/* Hero Header */}
@@ -457,37 +426,6 @@ const App: React.FC = () => {
           </button>
         </div>
 
-        {/* Config Modal */}
-        {showConfigModal && (
-           <div className="fixed inset-0 z-[60] flex items-center justify-center px-4 no-print">
-             <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowConfigModal(false)}></div>
-             <div className="relative bg-white rounded-xl shadow-2xl max-w-md w-full p-6 animate-in fade-in zoom-in duration-200">
-                <button onClick={() => setShowConfigModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
-                <h3 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
-                    <Database className="w-5 h-5 text-ice-600" />
-                    云端连接配置
-                </h3>
-                <p className="text-sm text-slate-500 mb-4">
-                    如果你看到红色报错，请检查下方的 URL 和 Key 是否与 Supabase 后台一致。
-                </p>
-                <div className="space-y-3">
-                    <div>
-                        <label className="block text-xs font-bold text-slate-600 mb-1">Project URL</label>
-                        <input type="text" value={configUrl} onChange={e => setConfigUrl(e.target.value)} className="w-full text-sm border border-slate-300 rounded px-3 py-2" placeholder="https://xxx.supabase.co" />
-                    </div>
-                    <div>
-                        <label className="block text-xs font-bold text-slate-600 mb-1">Anon Public Key (eyJ...)</label>
-                        <input type="text" value={configKey} onChange={e => setConfigKey(e.target.value)} className="w-full text-sm border border-slate-300 rounded px-3 py-2 font-mono" placeholder="eyJ..." />
-                    </div>
-                </div>
-                <div className="mt-6 flex gap-3">
-                    <button onClick={resetSupabaseConfig} className="flex-1 py-2 text-slate-500 text-sm hover:bg-slate-50 rounded">恢复默认</button>
-                    <button onClick={handleSaveConfig} className="flex-1 py-2 bg-slate-900 text-white rounded font-medium hover:bg-slate-800">保存并连接</button>
-                </div>
-             </div>
-           </div>
-        )}
-
         {showPrintHint && (
             <div className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-black/80 text-white px-6 py-4 rounded-lg shadow-2xl z-50 no-print backdrop-blur-sm">
                 <p className="text-center font-medium">正在生成打印视图...<br/><span className="text-sm text-gray-300">推荐在打印设置中选择"横向"或"缩放"以适应纸张</span></p>
@@ -526,27 +464,18 @@ const App: React.FC = () => {
                     <Globe className="w-4 h-4 text-slate-500" />
                     连接状态
                   </h4>
-                  
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between text-sm">
-                        <span className="text-slate-600">Sync Status:</span>
-                        <span className={`font-bold ${syncStatus === 'synced' ? 'text-green-600' : 'text-red-500'}`}>
-                            {syncStatus === 'synced' ? '正常 (Connected)' : '异常 (Error)'}
-                        </span>
-                    </div>
-                    {syncStatus === 'error' && (
-                        <div className="text-xs text-red-500 bg-red-50 p-2 rounded">
-                            {errorMessage || '无法连接到数据库，请检查下方的配置。'}
-                        </div>
-                    )}
-                    <button 
-                        onClick={() => { setShowShareModal(false); setShowConfigModal(true); }}
-                        className="w-full mt-2 py-2 border border-slate-300 rounded text-slate-600 text-sm hover:bg-white hover:text-slate-900 transition-colors flex items-center justify-center gap-2"
-                    >
-                        <Settings className="w-4 h-4" />
-                        检查/修改连接配置
-                    </button>
+
+                  <div className="flex items-center justify-between text-sm">
+                      <span className="text-slate-600">Sync Status:</span>
+                      <span className={`font-bold ${syncStatus === 'synced' ? 'text-green-600' : 'text-red-500'}`}>
+                          {syncStatus === 'synced' ? '正常 (Connected)' : '异常 (Error)'}
+                      </span>
                   </div>
+                  {syncStatus === 'error' && (
+                      <div className="text-xs text-red-500 bg-red-50 p-2 rounded mt-2">
+                          {errorMessage || '无法连接到数据库，请稍后重试。'}
+                      </div>
+                  )}
                 </div>
               </div>
 

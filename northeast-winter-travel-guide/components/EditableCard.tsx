@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { TravelItem } from '../types';
-import { Pencil, Save, X, Snowflake, Train, Home, Utensils, Heart, AlertTriangle, Upload, Image as ImageIcon, Trash2, Maximize2, MapPin, ExternalLink } from 'lucide-react';
+import { TravelItem, LocationItem } from '../types';
+import { Pencil, Save, X, Snowflake, Train, Home, Utensils, Heart, AlertTriangle, Upload, Image as ImageIcon, Trash2, Maximize2, MapPin, Navigation, Plus } from 'lucide-react';
 
 interface EditableCardProps {
   item: TravelItem;
@@ -11,7 +11,7 @@ interface EditableCardProps {
 export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate, onDelete }) => {
   // State for Main Card Editing
   const [isEditing, setIsEditing] = useState(false);
-  
+
   // State for Detail Modal
   const [showDetail, setShowDetail] = useState(false);
   const [isEditingDetail, setIsEditingDetail] = useState(false);
@@ -23,8 +23,10 @@ export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate, onDe
   const [editSubtitle, setEditSubtitle] = useState(item.subtitle || '');
   const [editTime, setEditTime] = useState(item.time || '');
   const [editImage, setEditImage] = useState(item.imageUrl || '');
-  const [editLocation, setEditLocation] = useState(item.locationKeyword || item.title);
-  
+  const [editLocations, setEditLocations] = useState<LocationItem[]>(
+    item.locations || (item.locationKeyword ? [{ name: item.title, keyword: item.locationKeyword }] : [])
+  );
+
   const [imgError, setImgError] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -36,7 +38,9 @@ export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate, onDe
     setEditSubtitle(item.subtitle || '');
     setEditTime(item.time || '');
     setEditImage(item.imageUrl || '');
-    setEditLocation(item.locationKeyword || item.title);
+    setEditLocations(
+      item.locations || (item.locationKeyword ? [{ name: item.title, keyword: item.locationKeyword }] : [])
+    );
     setImgError(false);
   }, [item]);
 
@@ -48,7 +52,9 @@ export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate, onDe
     setEditSubtitle(item.subtitle || '');
     setEditTime(item.time || '');
     setEditImage(item.imageUrl || '');
-    setEditLocation(item.locationKeyword || item.title);
+    setEditLocations(
+      item.locations || (item.locationKeyword ? [{ name: item.title, keyword: item.locationKeyword }] : [])
+    );
   };
 
   const handleSave = () => {
@@ -59,7 +65,8 @@ export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate, onDe
       subtitle: editSubtitle,
       time: editTime,
       imageUrl: editImage,
-      locationKeyword: editLocation
+      locations: editLocations.length > 0 ? editLocations : undefined,
+      locationKeyword: editLocations.length === 1 ? editLocations[0].keyword : undefined
     });
     setIsEditing(false);
     setIsEditingDetail(false);
@@ -90,6 +97,27 @@ export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate, onDe
     }
   };
 
+  // 打开高德地图（使用 window.open 确保在新标签页打开，避免返回问题）
+  const openAmap = (keyword: string) => {
+    const amapUrl = `https://uri.amap.com/search?keyword=${encodeURIComponent(keyword)}&src=mypage`;
+    window.open(amapUrl, '_blank', 'noopener,noreferrer');
+  };
+
+  // Location editing functions
+  const addLocation = () => {
+    setEditLocations([...editLocations, { name: '', keyword: '' }]);
+  };
+
+  const updateLocation = (index: number, field: 'name' | 'keyword', value: string) => {
+    const newLocations = [...editLocations];
+    newLocations[index] = { ...newLocations[index], [field]: value };
+    setEditLocations(newLocations);
+  };
+
+  const removeLocation = (index: number) => {
+    setEditLocations(editLocations.filter((_, i) => i !== index));
+  };
+
   const getIcon = () => {
     switch (item.type) {
       case 'alert': return <AlertTriangle className="w-4 h-4 text-red-500" />;
@@ -101,33 +129,35 @@ export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate, onDe
     }
   };
 
-  // Construct Amap URL
-  const keyword = item.locationKeyword || item.title;
-  // 强制指定 src=mypage 以获得更纯净的页面
-  const amapUrl = `https://uri.amap.com/search?keyword=${encodeURIComponent(keyword)}&src=mypage`;
+  // 获取有效的地点列表（优先使用 locations，否则用 locationKeyword）
+  const effectiveLocations: LocationItem[] = item.locations && item.locations.length > 0
+    ? item.locations
+    : item.locationKeyword
+      ? [{ name: item.locationKeyword, keyword: item.locationKeyword }]
+      : [];
 
   return (
     <>
       <div className="group page-break bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden transition-all duration-300 hover:shadow-md relative flex flex-row h-auto min-h-[140px]">
-        
+
         {/* Hidden File Input */}
-        <input 
-          type="file" 
+        <input
+          type="file"
           ref={fileInputRef}
           onChange={handleImageUpload}
-          className="hidden" 
+          className="hidden"
           accept="image/*"
         />
 
         {/* Image Section - Clickable */}
-        <div 
+        <div
           className="relative w-32 md:w-40 shrink-0 bg-slate-100 flex items-center justify-center overflow-hidden border-r border-slate-100 cursor-pointer group/img"
           onClick={() => !isEditing && setShowDetail(true)}
         >
           {editImage && !imgError ? (
-            <img 
-              src={editImage} 
-              alt={item.title} 
+            <img
+              src={editImage}
+              alt={item.title}
               className="w-full h-full object-cover absolute inset-0 transition-transform duration-500 group-hover/img:scale-110"
               onError={() => setImgError(true)}
             />
@@ -139,17 +169,17 @@ export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate, onDe
               </span>
             </div>
           )}
-          
+
           {/* Overlay hints */}
           {!isEditing && (
             <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/20 transition-all flex items-center justify-center opacity-0 group-hover/img:opacity-100">
                 <Maximize2 className="w-6 h-6 text-white drop-shadow-md" />
             </div>
           )}
-          
+
           {/* Upload Overlay (Edit Mode) */}
           {isEditing && (
-            <div 
+            <div
               className="absolute inset-0 bg-black/40 flex items-center justify-center cursor-pointer hover:bg-black/50 transition-colors z-10"
               onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
             >
@@ -165,7 +195,7 @@ export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate, onDe
         <div className="flex-1 p-4 flex flex-col justify-center min-w-0">
           <div className="absolute top-2 right-2 z-20 no-print flex gap-2">
             {!isEditing ? (
-              <button 
+              <button
                 onClick={() => { syncEditStates(); setIsEditing(true); }}
                 className="p-1.5 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity"
               >
@@ -245,7 +275,7 @@ export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate, onDe
               <div className="line-clamp-3">{item.content}</div>
             )}
           </div>
-          
+
           {/* Tags */}
           {!isEditing && item.tags && item.tags.length > 0 && (
             <div className="flex gap-1.5 mt-3 flex-wrap">
@@ -264,20 +294,20 @@ export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate, onDe
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowDetail(false)}></div>
           <div className="relative bg-white w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl shadow-2xl flex flex-col animate-in fade-in zoom-in duration-200">
-            
+
             {/* Modal Header Image */}
             <div className="relative h-48 md:h-64 shrink-0 bg-slate-200">
-              <button 
+              <button
                 onClick={() => setShowDetail(false)}
                 className="absolute top-4 right-4 z-10 p-2 bg-black/30 text-white rounded-full hover:bg-black/50 backdrop-blur-md transition-colors"
               >
                 <X className="w-5 h-5" />
               </button>
-              
+
               {editImage && !imgError ? (
-                <img 
-                  src={editImage} 
-                  alt={item.title} 
+                <img
+                  src={editImage}
+                  alt={item.title}
                   className="w-full h-full object-cover"
                 />
               ) : (
@@ -288,7 +318,7 @@ export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate, onDe
               )}
 
               {isEditingDetail && (
-                 <button 
+                 <button
                     onClick={() => fileInputRef.current?.click()}
                     className="absolute bottom-4 right-4 bg-white/90 text-slate-800 px-3 py-1.5 rounded-full text-xs font-bold shadow-lg flex items-center gap-1 hover:bg-white"
                  >
@@ -299,9 +329,9 @@ export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate, onDe
 
             {/* Modal Content */}
             <div className="p-6 md:p-8 bg-white">
-              
+
               {/* Header Row */}
-              <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-6">
+              <div className="flex flex-col gap-4 mb-6">
                 <div className="flex-1">
                    {isEditingDetail ? (
                       <div className="space-y-3">
@@ -349,32 +379,73 @@ export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate, onDe
                    )}
                 </div>
 
-                {/* Map Action */}
-                <div className="shrink-0 flex flex-col gap-2">
+                {/* Map Actions - Multiple Locations Support */}
+                <div className="shrink-0">
                    {isEditingDetail ? (
-                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
-                          <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">地图搜索关键词</label>
-                          <input 
-                            type="text" 
-                            value={editLocation}
-                            onChange={(e) => setEditLocation(e.target.value)}
-                            placeholder="越精确越好，如：哈尔滨冰雪大世界西门"
-                            className="w-full text-sm border-slate-300 rounded px-2 py-1"
-                          />
-                          <p className="text-[10px] text-slate-400 mt-1">提示：如果定位不准，请在这里修改为更具体的名称。</p>
+                      <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
+                          <div className="flex items-center justify-between mb-3">
+                            <label className="text-xs font-bold text-slate-600 uppercase">导航地点</label>
+                            <button
+                              onClick={addLocation}
+                              className="text-xs text-ice-600 hover:text-ice-700 flex items-center gap-1"
+                            >
+                              <Plus className="w-3 h-3" /> 添加地点
+                            </button>
+                          </div>
+
+                          {editLocations.length === 0 && (
+                            <p className="text-xs text-slate-400 text-center py-4">
+                              点击"添加地点"来添加导航位置
+                            </p>
+                          )}
+
+                          <div className="space-y-3">
+                            {editLocations.map((loc, index) => (
+                              <div key={index} className="flex gap-2 items-start bg-white p-2 rounded border border-slate-200">
+                                <div className="flex-1 space-y-2">
+                                  <input
+                                    type="text"
+                                    value={loc.name}
+                                    onChange={(e) => updateLocation(index, 'name', e.target.value)}
+                                    placeholder="显示名称（如：索菲亚大教堂）"
+                                    className="w-full text-sm border border-slate-200 rounded px-2 py-1"
+                                  />
+                                  <input
+                                    type="text"
+                                    value={loc.keyword}
+                                    onChange={(e) => updateLocation(index, 'keyword', e.target.value)}
+                                    placeholder="搜索关键词（如：哈尔滨圣索菲亚大教堂）"
+                                    className="w-full text-xs border border-slate-200 rounded px-2 py-1 text-slate-500"
+                                  />
+                                </div>
+                                <button
+                                  onClick={() => removeLocation(index)}
+                                  className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                          <p className="text-[10px] text-slate-400 mt-3">
+                            提示：搜索关键词越具体越好，如"冰雪大世界西门"比"冰雪大世界"更精确
+                          </p>
                       </div>
                    ) : (
-                      <a 
-                        href={amapUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white px-5 py-3 rounded-lg shadow-lg shadow-emerald-200 hover:scale-105 transition-transform active:scale-95 group/map"
-                        title="在新标签页中打开高德地图"
-                      >
-                        <MapPin className="w-5 h-5 group-hover/map:animate-bounce" />
-                        <span className="font-bold">高德导航</span>
-                        <ExternalLink className="w-3.5 h-3.5 opacity-70" />
-                      </a>
+                      effectiveLocations.length > 0 && (
+                        <div className="flex flex-wrap gap-2">
+                          {effectiveLocations.map((loc, index) => (
+                            <button
+                              key={index}
+                              onClick={() => openAmap(loc.keyword)}
+                              className="flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white px-4 py-2.5 rounded-lg shadow-md shadow-emerald-200 hover:scale-105 transition-transform active:scale-95"
+                            >
+                              <Navigation className="w-4 h-4" />
+                              <span className="font-medium text-sm">{loc.name}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )
                    )}
                 </div>
               </div>
@@ -413,7 +484,7 @@ export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate, onDe
                       <button onClick={handleSave} className="px-6 py-2 rounded-full bg-slate-900 text-white font-medium hover:bg-slate-800 shadow-lg">保存修改</button>
                     </>
                  ) : (
-                    <button 
+                    <button
                       onClick={() => { syncEditStates(); setIsEditingDetail(true); }}
                       className="flex items-center gap-2 px-4 py-2 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors"
                     >
