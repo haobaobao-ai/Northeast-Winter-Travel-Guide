@@ -102,11 +102,9 @@ export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate, onDe
   };
 
   // Construct Amap URL
-  // 使用高德 URI API 的通用搜索接口，这比 query 接口在移动端唤起 App 的效果更好
-  // https://uri.amap.com/search?keyword=XXX
   const keyword = item.locationKeyword || item.title;
-  // 增加 callnative=1 参数，尝试唤起 App
-  const amapUrl = `https://uri.amap.com/marker?keyword=${encodeURIComponent(keyword)}&src=mypage&callnative=1`;
+  // 强制指定 src=mypage 以获得更纯净的页面
+  const amapUrl = `https://uri.amap.com/search?keyword=${encodeURIComponent(keyword)}&src=mypage`;
 
   return (
     <>
@@ -371,7 +369,7 @@ export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate, onDe
                         target="_blank"
                         rel="noopener noreferrer"
                         className="flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white px-5 py-3 rounded-lg shadow-lg shadow-emerald-200 hover:scale-105 transition-transform active:scale-95 group/map"
-                        title="在高德地图中查看"
+                        title="在新标签页中打开高德地图"
                       >
                         <MapPin className="w-5 h-5 group-hover/map:animate-bounce" />
                         <span className="font-bold">高德导航</span>

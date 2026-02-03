@@ -6,131 +6,140 @@ import { EditableCard } from './components/EditableCard';
 import { Plane, Snowflake, MapPin, Heart, Printer, Share2, X, Globe, AlertCircle, Cloud, RefreshCw, Save, Plus, Camera, WifiOff, Loader2 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
-// 本地缓存 Key
 const LS_KEY_DATA = 'travel_plan_data';
-const LS_KEY_ID = 'travel_plan_id';
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabId>('prep');
   
-  // 1. 初始化时优先尝试从 localStorage 读取，实现“秒开”
+  // 1. UI 立即加载本地缓存，保证秒开，但标记为 "maybe stale"
   const [data, setData] = useState<TravelData>(() => {
     const cached = localStorage.getItem(LS_KEY_DATA);
     return cached ? JSON.parse(cached) : INITIAL_DATA;
   });
   
-  const [planId, setPlanId] = useState<number | string | null>(() => {
-    const cachedId = localStorage.getItem(LS_KEY_ID);
-    return cachedId ? cachedId : null;
-  });
-
+  const [planId, setPlanId] = useState<number | string | null>(null);
   const [showPrintHint, setShowPrintHint] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
   
   const [syncStatus, setSyncStatus] = useState<'idle' | 'saving' | 'synced' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isInitializing, setIsInitializing] = useState(!planId); // 如果本地有 ID，就不显示全屏 Loading
+  
+  // 首次加载状态
+  const [isFirstLoad, setIsFirstLoad] = useState(true);
   
   const heroInputRef = useRef<HTMLInputElement>(null);
 
-  // 初始化：寻找或创建存档
-  useEffect(() => {
-    const initSession = async () => {
-      try {
-        if (!planId) setSyncStatus('saving');
-        
-        // 尝试获取最新的一个存档
-        const { data: existingRows, error: fetchError } = await supabase
+  // --- 核心逻辑 1: 寻找并锁定“第一个”存档 ---
+  const fetchCloudData = async () => {
+    try {
+      // 永远寻找 ID 最小的那个（创建最早的），作为我们的“公共房间”
+      // 这样保证两台设备永远看向同一行数据
+      const { data: rows, error: fetchError } = await supabase
+        .from('travel_plans')
+        .select('id, data')
+        .order('id', { ascending: true }) // 取最旧的，保证稳定
+        .limit(1);
+
+      if (fetchError) throw fetchError;
+
+      let targetId: number | string;
+      let targetData: TravelData;
+
+      if (rows && rows.length > 0) {
+        // 找到了公共存档 -> 覆盖本地
+        targetId = rows[0].id;
+        targetData = rows[0].data;
+      } else {
+        // 数据库是空的 -> 初始化一个
+        console.log('No plan found, initializing shared plan...');
+        const { data: newRow, error: insertError } = await supabase
           .from('travel_plans')
-          .select('id, data')
-          .order('id', { ascending: false })
-          .limit(1);
-
-        if (fetchError) throw fetchError;
-
-        let currentId: number | string;
-        let currentData: TravelData;
-
-        if (existingRows && existingRows.length > 0) {
-          // A. 找到了现有存档
-          console.log('Found existing plan:', existingRows[0]);
-          currentId = existingRows[0].id;
-          currentData = existingRows[0].data;
-        } else {
-          // B. 没找到存档 -> 创建新的
-          console.log('Creating new plan...');
-          const { data: newRow, error: insertError } = await supabase
-            .from('travel_plans')
-            .insert({ data: INITIAL_DATA })
-            .select()
-            .single();
-          
-          if (insertError) throw insertError;
-          currentId = newRow.id;
-          currentData = newRow.data;
-        }
-
-        // 兼容性处理
-        if (currentData && !currentData.sections) {
-           currentData = { heroImage: INITIAL_DATA.heroImage, sections: currentData as any };
-        }
-
-        // 更新状态和本地缓存
-        setPlanId(currentId);
-        setData(currentData);
-        localStorage.setItem(LS_KEY_ID, String(currentId));
-        localStorage.setItem(LS_KEY_DATA, JSON.stringify(currentData));
+          .insert({ data: INITIAL_DATA })
+          .select()
+          .single();
         
-        setSyncStatus('synced');
-        setErrorMessage(null);
-
-      } catch (error: any) {
-        console.error('Initialization error:', error);
-        setSyncStatus('error');
-        // 即使出错，因为我们从 localStorage 读取了数据，用户依然可以看，只是不能同步
-        setErrorMessage('无法连接云端，目前显示的是本地缓存内容');
-      } finally {
-        setIsInitializing(false);
+        if (insertError) throw insertError;
+        targetId = newRow.id;
+        targetData = newRow.data;
       }
-    };
 
-    initSession();
+      // 数据兼容处理
+      if (targetData && !targetData.sections) {
+         targetData = { heroImage: INITIAL_DATA.heroImage, sections: targetData as any };
+      }
+
+      setPlanId(targetId);
+      
+      // 只有当云端数据确实不同时才更新，避免光标跳动
+      setData(prev => {
+          const isSame = JSON.stringify(prev) === JSON.stringify(targetData);
+          if (isSame) return prev;
+          
+          // 更新缓存
+          localStorage.setItem(LS_KEY_DATA, JSON.stringify(targetData));
+          return targetData;
+      });
+
+      setSyncStatus('synced');
+      setErrorMessage(null);
+      setIsFirstLoad(false);
+
+    } catch (error: any) {
+      console.error('Sync error:', error);
+      setSyncStatus('error');
+      // 如果是第一次加载就失败，必须告诉用户
+      if (isFirstLoad) {
+          setErrorMessage('连接云端失败，正在使用离线模式 (数据无法同步)');
+      }
+      setIsFirstLoad(false);
+    }
+  };
+
+  // --- 核心逻辑 2: 初始化 + 轮询 (双保险) ---
+  useEffect(() => {
+    // 1. 立即执行一次
+    fetchCloudData();
+
+    // 2. 开启轮询 (每 5 秒拉取一次)
+    // 即使 Realtime 挂了，轮询也能保证数据最终一致
+    const intervalId = setInterval(() => {
+        // 只有在空闲时才拉取，避免打断用户输入
+        if (syncStatus === 'synced' || syncStatus === 'idle') {
+            fetchCloudData();
+        }
+    }, 5000);
+
+    return () => clearInterval(intervalId);
   }, []);
 
-  // 实时同步监听
+  // --- 核心逻辑 3: 实时监听 (Realtime) ---
   useEffect(() => {
     if (!planId) return;
 
-    console.log(`Subscribing to realtime changes for plan ID: ${planId}`);
-    
     const channel = supabase
-      .channel('travel_plan_sync') // 使用固定的 Channel 名，避免频繁重建
+      .channel(`room_${planId}`)
       .on('postgres_changes', { 
-          event: '*', // 监听所有事件 (INSERT/UPDATE)
+          event: '*', 
           schema: 'public', 
           table: 'travel_plans', 
           filter: `id=eq.${planId}` 
       }, (payload) => {
-        // 收到数据库变更
         if (payload.new && (payload.new as any).data) {
-          console.log('Remote update received!');
+          console.log('Realtime update received');
           const newData = (payload.new as any).data;
           
-          // 兼容旧数据
+          // 兼容处理
           const finalData = !newData.sections 
             ? { heroImage: INITIAL_DATA.heroImage, sections: newData } 
             : newData;
 
           setData(finalData);
-          localStorage.setItem(LS_KEY_DATA, JSON.stringify(finalData)); // 更新缓存
+          localStorage.setItem(LS_KEY_DATA, JSON.stringify(finalData));
           setSyncStatus('synced');
         }
       })
       .subscribe((status) => {
-        console.log('Subscription status:', status);
-        if (status === 'SUBSCRIBED') {
-            setSyncStatus('synced');
-        }
+          if (status === 'SUBSCRIBED') console.log('Realtime Connected');
       });
 
     return () => {
@@ -138,29 +147,33 @@ const App: React.FC = () => {
     };
   }, [planId]);
 
-  // 保存数据
+  // --- 核心逻辑 4: 保存数据 ---
   const saveData = async (newData: TravelData) => {
-    // 1. 乐观更新：立即更新 UI 和 本地缓存
+    // 1. 乐观更新 UI
     setData(newData);
     localStorage.setItem(LS_KEY_DATA, JSON.stringify(newData));
     setSyncStatus('saving');
     setErrorMessage(null);
 
-    if (!planId) return;
+    if (!planId) {
+        console.warn('Cannot save: No Plan ID');
+        return;
+    }
 
     try {
-      // 2. 发送到云端
+      // 2. 写入数据库
       const { error } = await supabase
         .from('travel_plans')
         .update({ data: newData })
         .eq('id', planId);
 
       if (error) throw error;
+      
       setSyncStatus('synced');
     } catch (error: any) {
-      console.error('Save error:', error);
+      console.error('Save failed:', error);
       setSyncStatus('error');
-      setErrorMessage(`同步失败: ${error.message}`);
+      setErrorMessage(`保存失败: ${error.message || '网络连接不稳定'}`);
     }
   };
 
@@ -230,11 +243,11 @@ const App: React.FC = () => {
 
   const currentSection = data.sections[activeTab];
 
-  if (isInitializing) {
+  if (isFirstLoad && !data) {
     return (
         <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-500 gap-4">
             <Loader2 className="w-10 h-10 animate-spin text-ice-500" />
-            <p className="text-sm font-medium">正在恢复云端行程...</p>
+            <p className="text-sm font-medium">正在寻找你们的专属行程...</p>
         </div>
     );
   }
@@ -278,8 +291,8 @@ const App: React.FC = () => {
         <div className="absolute top-4 right-4 z-20 flex items-center gap-2 bg-black/30 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/20 text-xs">
            {syncStatus === 'saving' && <><RefreshCw className="w-3 h-3 animate-spin" /> <span>同步中...</span></>}
            {syncStatus === 'synced' && <><Cloud className="w-3 h-3 text-green-400" /> <span>已同步</span></>}
-           {syncStatus === 'error' && <><AlertCircle className="w-3 h-3 text-red-400" /> <span>同步失败</span></>}
-           {syncStatus === 'idle' && <><Cloud className="w-3 h-3 text-slate-300" /> <span>准备就绪</span></>}
+           {syncStatus === 'error' && <><AlertCircle className="w-3 h-3 text-red-400" /> <span>未保存</span></>}
+           {syncStatus === 'idle' && <><Cloud className="w-3 h-3 text-slate-300" /> <span>在线</span></>}
         </div>
 
         <div className="relative z-10 text-center px-4 max-w-4xl mx-auto mt-0 md:mt-8">
