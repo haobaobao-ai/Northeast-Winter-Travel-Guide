@@ -370,7 +370,7 @@ export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate, onDe
                         target="_blank"
                         rel="noopener noreferrer"
                         className="flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white px-5 py-3 rounded-lg shadow-lg shadow-emerald-200 hover:scale-105 transition-transform active:scale-95 group/map"
-                        title="在新标签页中打开高德地图"
+                        title="在高德地图中查看"
                       >
                         <MapPin className="w-5 h-5 group-hover/map:animate-bounce" />
                         <span className="font-bold">高德导航</span>
