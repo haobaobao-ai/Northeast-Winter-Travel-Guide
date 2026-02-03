@@ -105,7 +105,8 @@ export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate, onDe
   // 使用高德 URI API 的通用搜索接口，这比 query 接口在移动端唤起 App 的效果更好
   // https://uri.amap.com/search?keyword=XXX
   const keyword = item.locationKeyword || item.title;
-  const amapUrl = `https://uri.amap.com/search?keyword=${encodeURIComponent(keyword)}&src=mypage`;
+  // 增加 callnative=1 参数，尝试唤起 App
+  const amapUrl = `https://uri.amap.com/marker?keyword=${encodeURIComponent(keyword)}&src=mypage&callnative=1`;
 
   return (
     <>
