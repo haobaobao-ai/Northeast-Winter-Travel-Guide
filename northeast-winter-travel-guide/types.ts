@@ -21,6 +21,7 @@ export interface TravelSection {
 export interface TravelData {
   heroImage: string;
   sections: Record<string, TravelSection>;
+  lastUpdated?: number; // 新增：用于版本冲突检测的时间戳
 }
 
 export type TabId = 'prep' | 'harbin' | 'qiqihar' | 'tips';

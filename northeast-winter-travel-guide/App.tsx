@@ -3,41 +3,67 @@ import { createRoot } from 'react-dom/client';
 import { INITIAL_DATA } from './constants';
 import { TabId, TravelItem, TravelData } from './types';
 import { EditableCard } from './components/EditableCard';
-import { Plane, Snowflake, MapPin, Heart, Printer, Share2, X, Globe, AlertCircle, Cloud, RefreshCw, Save, Plus, Camera, WifiOff, Loader2 } from 'lucide-react';
-import { supabase } from './supabaseClient';
+import { Plane, Snowflake, MapPin, Heart, Printer, Share2, X, Globe, AlertCircle, Cloud, RefreshCw, Save, Plus, Camera, WifiOff, Loader2, Info, Settings, Database } from 'lucide-react';
+import { supabase, updateSupabaseConfig, resetSupabaseConfig, getCurrentConfig } from './supabaseClient';
 
 const LS_KEY_DATA = 'travel_plan_data';
+const LS_KEY_ID = 'travel_plan_id';
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabId>('prep');
   
-  // 1. UI 立即加载本地缓存，保证秒开，但标记为 "maybe stale"
+  // 1. 本地缓存读取
   const [data, setData] = useState<TravelData>(() => {
-    const cached = localStorage.getItem(LS_KEY_DATA);
-    return cached ? JSON.parse(cached) : INITIAL_DATA;
+    try {
+      const cached = localStorage.getItem(LS_KEY_DATA);
+      return cached ? JSON.parse(cached) : INITIAL_DATA;
+    } catch (e) {
+      return INITIAL_DATA;
+    }
   });
   
-  const [planId, setPlanId] = useState<number | string | null>(null);
+  const [planId, setPlanId] = useState<number | string | null>(() => {
+     return localStorage.getItem(LS_KEY_ID) || null;
+  });
+
   const [showPrintHint, setShowPrintHint] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
+  const [showConfigModal, setShowConfigModal] = useState(false);
+  const [showErrorDetail, setShowErrorDetail] = useState(false);
   
   const [syncStatus, setSyncStatus] = useState<'idle' | 'saving' | 'synced' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  
-  // 首次加载状态
+  const [errorDetail, setErrorDetail] = useState<string | null>(null);
   const [isFirstLoad, setIsFirstLoad] = useState(true);
   
+  // Config Form State
+  const [configUrl, setConfigUrl] = useState(getCurrentConfig().url);
+  const [configKey, setConfigKey] = useState(getCurrentConfig().key);
+
   const heroInputRef = useRef<HTMLInputElement>(null);
 
-  // --- 核心逻辑 1: 寻找并锁定“第一个”存档 ---
+  // --- 冲突解决逻辑 ---
+  const handleDataMerge = (cloudData: TravelData, localData: TravelData): TravelData => {
+    const cloudTime = cloudData.lastUpdated || 0;
+    const localTime = localData.lastUpdated || 0;
+
+    if (cloudTime > localTime) {
+       console.log(`Cloud (${cloudTime}) > Local (${localTime}). Using Cloud.`);
+       return cloudData;
+    } else {
+       console.log(`Local (${localTime}) >= Cloud (${cloudTime}). Keeping Local.`);
+       return localData; 
+    }
+  };
+
+  // --- 核心逻辑 1: 拉取并同步 ---
   const fetchCloudData = async () => {
     try {
-      // 永远寻找 ID 最小的那个（创建最早的），作为我们的“公共房间”
-      // 这样保证两台设备永远看向同一行数据
+      // 永远寻找 ID 最小的那个
       const { data: rows, error: fetchError } = await supabase
         .from('travel_plans')
         .select('id, data')
-        .order('id', { ascending: true }) // 取最旧的，保证稳定
+        .order('id', { ascending: true })
         .limit(1);
 
       if (fetchError) throw fetchError;
@@ -46,15 +72,14 @@ const App: React.FC = () => {
       let targetData: TravelData;
 
       if (rows && rows.length > 0) {
-        // 找到了公共存档 -> 覆盖本地
         targetId = rows[0].id;
         targetData = rows[0].data;
       } else {
-        // 数据库是空的 -> 初始化一个
-        console.log('No plan found, initializing shared plan...');
+        console.log('No plan found, initializing...');
+        const initData = { ...INITIAL_DATA, lastUpdated: Date.now() };
         const { data: newRow, error: insertError } = await supabase
           .from('travel_plans')
-          .insert({ data: INITIAL_DATA })
+          .insert({ data: initData })
           .select()
           .single();
         
@@ -63,59 +88,65 @@ const App: React.FC = () => {
         targetData = newRow.data;
       }
 
-      // 数据兼容处理
+      // 兼容性
       if (targetData && !targetData.sections) {
-         targetData = { heroImage: INITIAL_DATA.heroImage, sections: targetData as any };
+         targetData = { heroImage: INITIAL_DATA.heroImage, sections: targetData as any, lastUpdated: 0 };
       }
 
       setPlanId(targetId);
-      
-      // 只有当云端数据确实不同时才更新，避免光标跳动
-      setData(prev => {
-          const isSame = JSON.stringify(prev) === JSON.stringify(targetData);
-          if (isSame) return prev;
-          
-          // 更新缓存
-          localStorage.setItem(LS_KEY_DATA, JSON.stringify(targetData));
-          return targetData;
+      localStorage.setItem(LS_KEY_ID, String(targetId));
+
+      // --- 关键：冲突检测 ---
+      setData(currentLocalData => {
+         const mergedData = handleDataMerge(targetData, currentLocalData);
+         const localTime = currentLocalData.lastUpdated || 0;
+         const cloudTime = targetData.lastUpdated || 0;
+         
+         if (localTime > cloudTime) {
+             console.log("Detected unsynced local changes, attempting to push...");
+             setTimeout(() => saveData(currentLocalData), 500);
+         } else {
+             localStorage.setItem(LS_KEY_DATA, JSON.stringify(mergedData));
+         }
+         return mergedData;
       });
 
       setSyncStatus('synced');
       setErrorMessage(null);
-      setIsFirstLoad(false);
+      setErrorDetail(null);
 
     } catch (error: any) {
-      console.error('Sync error:', error);
+      console.error('Fetch error:', error);
       setSyncStatus('error');
-      // 如果是第一次加载就失败，必须告诉用户
-      if (isFirstLoad) {
-          setErrorMessage('连接云端失败，正在使用离线模式 (数据无法同步)');
-      }
-      setIsFirstLoad(false);
+      
+      const msg = error.message || '未知错误';
+      let friendlyMsg = '连接云端失败';
+      
+      if (msg.includes('fetch')) friendlyMsg = '网络连接异常';
+      if (msg.includes('JWT') || msg.includes('apikey') || msg.code === 'PGRST301') friendlyMsg = 'API Key 权限验证失败';
+      if (msg.includes('relation') || msg.code === '42P01') friendlyMsg = '数据库表不存在';
+      
+      setErrorMessage(`${friendlyMsg} (离线模式)`);
+      setErrorDetail(JSON.stringify(error, null, 2));
+    } finally {
+        setIsFirstLoad(false);
     }
   };
 
-  // --- 核心逻辑 2: 初始化 + 轮询 (双保险) ---
+  // --- 初始化 & 轮询 ---
   useEffect(() => {
-    // 1. 立即执行一次
     fetchCloudData();
-
-    // 2. 开启轮询 (每 5 秒拉取一次)
-    // 即使 Realtime 挂了，轮询也能保证数据最终一致
     const intervalId = setInterval(() => {
-        // 只有在空闲时才拉取，避免打断用户输入
         if (syncStatus === 'synced' || syncStatus === 'idle') {
             fetchCloudData();
         }
     }, 5000);
-
     return () => clearInterval(intervalId);
   }, []);
 
-  // --- 核心逻辑 3: 实时监听 (Realtime) ---
+  // --- Realtime ---
   useEffect(() => {
     if (!planId) return;
-
     const channel = supabase
       .channel(`room_${planId}`)
       .on('postgres_changes', { 
@@ -125,55 +156,64 @@ const App: React.FC = () => {
           filter: `id=eq.${planId}` 
       }, (payload) => {
         if (payload.new && (payload.new as any).data) {
-          console.log('Realtime update received');
           const newData = (payload.new as any).data;
+          const finalData = !newData.sections ? { ...INITIAL_DATA, sections: newData } : newData;
           
-          // 兼容处理
-          const finalData = !newData.sections 
-            ? { heroImage: INITIAL_DATA.heroImage, sections: newData } 
-            : newData;
-
-          setData(finalData);
-          localStorage.setItem(LS_KEY_DATA, JSON.stringify(finalData));
+          setData(currentLocal => {
+              const merged = handleDataMerge(finalData, currentLocal);
+              localStorage.setItem(LS_KEY_DATA, JSON.stringify(merged));
+              return merged;
+          });
           setSyncStatus('synced');
         }
       })
-      .subscribe((status) => {
-          if (status === 'SUBSCRIBED') console.log('Realtime Connected');
-      });
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, [planId]);
 
-  // --- 核心逻辑 4: 保存数据 ---
+  // --- 保存数据 (修复：如果没有 ID，自动创建) ---
   const saveData = async (newData: TravelData) => {
-    // 1. 乐观更新 UI
-    setData(newData);
-    localStorage.setItem(LS_KEY_DATA, JSON.stringify(newData));
+    const dataWithTimestamp = { ...newData, lastUpdated: Date.now() };
+    
+    // 乐观更新
+    setData(dataWithTimestamp);
+    localStorage.setItem(LS_KEY_DATA, JSON.stringify(dataWithTimestamp));
     setSyncStatus('saving');
     setErrorMessage(null);
 
-    if (!planId) {
-        console.warn('Cannot save: No Plan ID');
-        return;
-    }
-
     try {
-      // 2. 写入数据库
-      const { error } = await supabase
-        .from('travel_plans')
-        .update({ data: newData })
-        .eq('id', planId);
+      let targetId = planId;
 
-      if (error) throw error;
+      // 如果当前没有 ID (说明之前的 fetch 失败了，或者初始化没成功)
+      if (!targetId) {
+          console.log('No Plan ID found during save, attempting to create new plan...');
+          const { data: newRow, error: insertError } = await supabase
+              .from('travel_plans')
+              .insert({ data: dataWithTimestamp })
+              .select()
+              .single();
+          
+          if (insertError) throw insertError;
+          
+          targetId = newRow.id;
+          setPlanId(newRow.id);
+          localStorage.setItem(LS_KEY_ID, String(newRow.id));
+      } else {
+          // 正常更新
+          const { error } = await supabase
+            .from('travel_plans')
+            .update({ data: dataWithTimestamp })
+            .eq('id', targetId);
+
+          if (error) throw error;
+      }
       
       setSyncStatus('synced');
     } catch (error: any) {
       console.error('Save failed:', error);
       setSyncStatus('error');
-      setErrorMessage(`保存失败: ${error.message || '网络连接不稳定'}`);
+      setErrorMessage('保存失败 (请检查配置)');
+      setErrorDetail(error.message || 'Unknown error');
     }
   };
 
@@ -192,15 +232,14 @@ const App: React.FC = () => {
     const newData = { ...data };
     const section = newData.sections[sectionId];
     if (section) {
-        const newItem: TravelItem = {
+        section.items.push({
             id: `new-${Date.now()}`,
             title: '新行程',
             content: '点击编辑添加详细内容...',
             type: 'itinerary',
             time: '待定',
             tags: ['新增']
-        };
-        section.items.push(newItem);
+        });
     }
     saveData(newData);
   };
@@ -219,8 +258,7 @@ const App: React.FC = () => {
     if (file) {
       const reader = new FileReader();
       reader.onloadend = () => {
-        const newData = { ...data, heroImage: reader.result as string };
-        saveData(newData);
+        saveData({ ...data, heroImage: reader.result as string });
       };
       reader.readAsDataURL(file);
     }
@@ -228,10 +266,11 @@ const App: React.FC = () => {
 
   const handlePrint = () => {
     setShowPrintHint(true);
-    setTimeout(() => {
-        window.print();
-        setShowPrintHint(false);
-    }, 500);
+    setTimeout(() => { window.print(); setShowPrintHint(false); }, 500);
+  };
+
+  const handleSaveConfig = () => {
+      updateSupabaseConfig(configUrl, configKey);
   };
 
   const tabs: { id: TabId; label: string; icon: React.ReactNode }[] = [
@@ -256,10 +295,27 @@ const App: React.FC = () => {
     <div className="min-h-screen pb-20 bg-slate-50">
       
       {errorMessage && (
-        <div className="bg-red-500 text-white text-sm py-2 px-4 text-center font-bold sticky top-0 z-[100] flex items-center justify-center gap-2 shadow-md animate-in slide-in-from-top">
-            <WifiOff className="w-4 h-4" />
-            {errorMessage}
+        <div className="bg-red-500 text-white text-sm py-2 px-4 text-center font-bold sticky top-0 z-[100] shadow-md flex items-center justify-between animate-in slide-in-from-top">
+            <div className="flex items-center gap-2">
+                <WifiOff className="w-4 h-4" />
+                <span>{errorMessage}</span>
+            </div>
+            <div className="flex gap-2">
+                <button onClick={() => setShowConfigModal(true)} className="text-xs bg-white/20 px-2 py-1 rounded hover:bg-white/30 flex items-center gap-1">
+                    <Settings className="w-3 h-3" /> 配置
+                </button>
+                <button onClick={() => setShowErrorDetail(!showErrorDetail)} className="text-xs bg-white/20 px-2 py-1 rounded hover:bg-white/30">
+                    <Info className="w-3 h-3" />
+                </button>
+            </div>
         </div>
+      )}
+      
+      {showErrorDetail && errorDetail && (
+          <div className="bg-red-50 p-4 border-b border-red-100 text-xs font-mono text-red-800 break-all">
+              <p className="font-bold mb-1">错误详情:</p>
+              {errorDetail}
+          </div>
       )}
 
       {/* Hero Header */}
@@ -291,7 +347,7 @@ const App: React.FC = () => {
         <div className="absolute top-4 right-4 z-20 flex items-center gap-2 bg-black/30 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/20 text-xs">
            {syncStatus === 'saving' && <><RefreshCw className="w-3 h-3 animate-spin" /> <span>同步中...</span></>}
            {syncStatus === 'synced' && <><Cloud className="w-3 h-3 text-green-400" /> <span>已同步</span></>}
-           {syncStatus === 'error' && <><AlertCircle className="w-3 h-3 text-red-400" /> <span>未保存</span></>}
+           {syncStatus === 'error' && <><AlertCircle className="w-3 h-3 text-red-400" /> <span>未同步</span></>}
            {syncStatus === 'idle' && <><Cloud className="w-3 h-3 text-slate-300" /> <span>在线</span></>}
         </div>
 
@@ -403,6 +459,37 @@ const App: React.FC = () => {
           </button>
         </div>
 
+        {/* Config Modal */}
+        {showConfigModal && (
+           <div className="fixed inset-0 z-[60] flex items-center justify-center px-4 no-print">
+             <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowConfigModal(false)}></div>
+             <div className="relative bg-white rounded-xl shadow-2xl max-w-md w-full p-6 animate-in fade-in zoom-in duration-200">
+                <button onClick={() => setShowConfigModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
+                <h3 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
+                    <Database className="w-5 h-5 text-ice-600" />
+                    云端连接配置
+                </h3>
+                <p className="text-sm text-slate-500 mb-4">
+                    如果你看到红色报错，请检查下方的 URL 和 Key 是否与 Supabase 后台一致。
+                </p>
+                <div className="space-y-3">
+                    <div>
+                        <label className="block text-xs font-bold text-slate-600 mb-1">Project URL</label>
+                        <input type="text" value={configUrl} onChange={e => setConfigUrl(e.target.value)} className="w-full text-sm border border-slate-300 rounded px-3 py-2" placeholder="https://xxx.supabase.co" />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-600 mb-1">Anon Public Key (eyJ...)</label>
+                        <input type="text" value={configKey} onChange={e => setConfigKey(e.target.value)} className="w-full text-sm border border-slate-300 rounded px-3 py-2 font-mono" placeholder="eyJ..." />
+                    </div>
+                </div>
+                <div className="mt-6 flex gap-3">
+                    <button onClick={resetSupabaseConfig} className="flex-1 py-2 text-slate-500 text-sm hover:bg-slate-50 rounded">恢复默认</button>
+                    <button onClick={handleSaveConfig} className="flex-1 py-2 bg-slate-900 text-white rounded font-medium hover:bg-slate-800">保存并连接</button>
+                </div>
+             </div>
+           </div>
+        )}
+
         {showPrintHint && (
             <div className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-black/80 text-white px-6 py-4 rounded-lg shadow-2xl z-50 no-print backdrop-blur-sm">
                 <p className="text-center font-medium">正在生成打印视图...<br/><span className="text-sm text-gray-300">推荐在打印设置中选择"横向"或"缩放"以适应纸张</span></p>
@@ -429,38 +516,38 @@ const App: React.FC = () => {
                 <div className="p-4 bg-green-50 rounded-lg border border-green-100">
                    <h4 className="font-bold text-green-800 flex items-center gap-2 mb-2">
                     <Save className="w-4 h-4" />
-                    现在可以实时编辑了！
+                    已启用实时保存
                   </h4>
                   <p className="text-sm text-green-700">
-                    这个版本已经连接了数据库。
-                    <br/>
-                    1. 你在页面上修改文字/上传图片，会<strong>自动保存</strong>到云端。
-                    <br/>
-                    2. 她打开链接后，会看到最新的内容。
-                    <br/>
-                    3. 如果她也在编辑，你的页面会自动刷新看到她的修改。
+                    你的所有修改都会自动保存到云端。如果你和她同时打开这个网页，修改会实时同步。
                   </p>
                 </div>
 
                 <div className="p-4 bg-slate-50 rounded-lg border border-slate-100">
                   <h4 className="font-bold text-slate-800 flex items-center gap-2 mb-2">
                     <Globe className="w-4 h-4 text-slate-500" />
-                    如何发给她 (中国大陆访问)
+                    连接状态
                   </h4>
                   
                   <div className="space-y-3">
-                    <div className="flex items-start gap-2 text-sm text-slate-600">
-                      <span className="font-bold shrink-0">步骤1:</span>
-                      <div>确保你已经在 <code>supabaseClient.ts</code> 中填入了正确的 URL 和 KEY。</div>
+                    <div className="flex items-center justify-between text-sm">
+                        <span className="text-slate-600">Sync Status:</span>
+                        <span className={`font-bold ${syncStatus === 'synced' ? 'text-green-600' : 'text-red-500'}`}>
+                            {syncStatus === 'synced' ? '正常 (Connected)' : '异常 (Error)'}
+                        </span>
                     </div>
-                    <div className="flex items-start gap-2 text-sm text-slate-600">
-                      <span className="font-bold shrink-0">步骤2:</span>
-                      <div>
-                        将代码上传到 GitHub，然后使用 <strong>Cloudflare Pages</strong> 部署。
-                        <br/>
-                        <span className="text-xs text-slate-400">Cloudflare Pages 在国内访问速度尚可，且不需要翻墙。不要用 Vercel/Netlify。</span>
-                      </div>
-                    </div>
+                    {syncStatus === 'error' && (
+                        <div className="text-xs text-red-500 bg-red-50 p-2 rounded">
+                            {errorMessage || '无法连接到数据库，请检查下方的配置。'}
+                        </div>
+                    )}
+                    <button 
+                        onClick={() => { setShowShareModal(false); setShowConfigModal(true); }}
+                        className="w-full mt-2 py-2 border border-slate-300 rounded text-slate-600 text-sm hover:bg-white hover:text-slate-900 transition-colors flex items-center justify-center gap-2"
+                    >
+                        <Settings className="w-4 h-4" />
+                        检查/修改连接配置
+                    </button>
                   </div>
                 </div>
               </div>

@@ -1,6 +1,7 @@
 import { TravelData } from './types';
 
 export const INITIAL_DATA: TravelData = {
+  lastUpdated: Date.now(), // 初始化时间戳
   heroImage: 'https://images.unsplash.com/photo-1612450630325-a6e5b2259648?q=80&w=1920&auto=format&fit=crop',
   sections: {
     prep: {

@@ -1,13 +1,38 @@
 import { createClient } from '@supabase/supabase-js';
 
-// ⚠️ 极其重要：
-// 1. 下面的 SUPABASE_URL 应该是你的项目 URL
-// 2. 下面的 SUPABASE_ANON_KEY 必须是你从 Supabase 后台 -> Project Settings -> API 复制的 "anon public" Key。
+// 默认值 (如果本地没有配置，则使用这些)
+const DEFAULT_URL = 'https://aqoconcaaulgyfdvqqwo.supabase.co'; 
+const DEFAULT_KEY = 'sb_publishable__mEJwAPbyyH5sKWKV88cew_ADH7vlNp';
 
-const SUPABASE_URL = 'https://aqoconcaaulgyfdvqqwo.supabase.co'; 
-const SUPABASE_ANON_KEY = 'sb_publishable__mEJwAPbyyH5sKWKV88cew_ADH7vlNp';
+// 优先从 localStorage 读取配置 (允许用户在 UI 中修改)
+const savedUrl = localStorage.getItem('custom_supabase_url');
+const savedKey = localStorage.getItem('custom_supabase_key');
+
+const SUPABASE_URL = savedUrl || DEFAULT_URL;
+const SUPABASE_ANON_KEY = savedKey || DEFAULT_KEY;
+
+// 简单的格式检查
+if (!SUPABASE_ANON_KEY.startsWith('eyJ')) {
+    console.warn('⚠️ Supabase Key 格式可能不正确 (通常以 eyJ 开头)。请检查是否使用了正确的 Anon Key。');
+}
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// 移除 PLAN_ID 常量
-// 我们现在改为动态从数据库获取最新的 ID，避免因为强制指定 ID 而导致的权限错误。
+// 辅助函数：保存新配置并重载
+export const updateSupabaseConfig = (url: string, key: string) => {
+    localStorage.setItem('custom_supabase_url', url.trim());
+    localStorage.setItem('custom_supabase_key', key.trim());
+    window.location.reload(); // 强制刷新以应用新客户端
+};
+
+export const resetSupabaseConfig = () => {
+    localStorage.removeItem('custom_supabase_url');
+    localStorage.removeItem('custom_supabase_key');
+    window.location.reload();
+};
+
+export const getCurrentConfig = () => ({
+    url: SUPABASE_URL,
+    key: SUPABASE_ANON_KEY,
+    isCustom: !!savedKey
+});
