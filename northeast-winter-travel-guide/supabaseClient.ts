@@ -1,8 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 
 // 默认值 (如果本地没有配置，则使用这些)
-const DEFAULT_URL = 'https://aqoconcaaulgyfdvqqwo.supabase.co'; 
-const DEFAULT_KEY = 'sb_publishable__mEJwAPbyyH5sKWKV88cew_ADH7vlNp';
+const DEFAULT_URL = 'https://aqoconcaaulgyfdvqqwo.supabase.co';
+const DEFAULT_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFxb2NvbmNhYXVsZ3lmZHZxcXdvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk2NzYwNTksImV4cCI6MjA4NTI1MjA1OX0.O0VAkD4JgEBgDXnNW2ooImNNzCBnlscV6-ElTfd-UYs';
 
 // 优先从 localStorage 读取配置 (允许用户在 UI 中修改)
 const savedUrl = localStorage.getItem('custom_supabase_url');

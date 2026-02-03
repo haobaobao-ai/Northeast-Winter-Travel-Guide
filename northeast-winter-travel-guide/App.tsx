@@ -137,9 +137,7 @@ const App: React.FC = () => {
   useEffect(() => {
     fetchCloudData();
     const intervalId = setInterval(() => {
-        if (syncStatus === 'synced' || syncStatus === 'idle') {
-            fetchCloudData();
-        }
+        fetchCloudData(); // 直接轮询，冲突检测会自动处理
     }, 5000);
     return () => clearInterval(intervalId);
   }, []);
