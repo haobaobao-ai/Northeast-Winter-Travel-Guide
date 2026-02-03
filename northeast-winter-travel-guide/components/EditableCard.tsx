@@ -102,7 +102,10 @@ export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate, onDe
   };
 
   // Construct Amap URL
-  const amapUrl = `https://www.amap.com/search?query=${encodeURIComponent(item.locationKeyword || item.title)}`;
+  // 使用高德 URI API 的通用搜索接口，这比 query 接口在移动端唤起 App 的效果更好
+  // https://uri.amap.com/search?keyword=XXX
+  const keyword = item.locationKeyword || item.title;
+  const amapUrl = `https://uri.amap.com/search?keyword=${encodeURIComponent(keyword)}&src=mypage`;
 
   return (
     <>
@@ -356,16 +359,18 @@ export const EditableCard: React.FC<EditableCardProps> = ({ item, onUpdate, onDe
                             type="text" 
                             value={editLocation}
                             onChange={(e) => setEditLocation(e.target.value)}
-                            placeholder="如: 索菲亚大教堂"
+                            placeholder="越精确越好，如：哈尔滨冰雪大世界西门"
                             className="w-full text-sm border-slate-300 rounded px-2 py-1"
                           />
+                          <p className="text-[10px] text-slate-400 mt-1">提示：如果定位不准，请在这里修改为更具体的名称。</p>
                       </div>
                    ) : (
                       <a 
                         href={amapUrl}
                         target="_blank"
-                        rel="noreferrer"
+                        rel="noopener noreferrer"
                         className="flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white px-5 py-3 rounded-lg shadow-lg shadow-emerald-200 hover:scale-105 transition-transform active:scale-95 group/map"
+                        title="在新标签页中打开高德地图"
                       >
                         <MapPin className="w-5 h-5 group-hover/map:animate-bounce" />
                         <span className="font-bold">高德导航</span>

@@ -4,19 +4,32 @@ import { INITIAL_DATA } from './constants';
 import { TabId, TravelItem, TravelData } from './types';
 import { EditableCard } from './components/EditableCard';
 import { Plane, Snowflake, MapPin, Heart, Printer, Share2, X, Globe, AlertCircle, Cloud, RefreshCw, Save, Plus, Camera, WifiOff, Loader2 } from 'lucide-react';
-import { supabase } from './supabaseClient'; // 移除 PLAN_ID 引用
+import { supabase } from './supabaseClient';
+
+// 本地缓存 Key
+const LS_KEY_DATA = 'travel_plan_data';
+const LS_KEY_ID = 'travel_plan_id';
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabId>('prep');
-  const [data, setData] = useState<TravelData>(INITIAL_DATA);
-  const [planId, setPlanId] = useState<number | string | null>(null); // 动态存储从数据库获取的 ID
   
+  // 1. 初始化时优先尝试从 localStorage 读取，实现“秒开”
+  const [data, setData] = useState<TravelData>(() => {
+    const cached = localStorage.getItem(LS_KEY_DATA);
+    return cached ? JSON.parse(cached) : INITIAL_DATA;
+  });
+  
+  const [planId, setPlanId] = useState<number | string | null>(() => {
+    const cachedId = localStorage.getItem(LS_KEY_ID);
+    return cachedId ? cachedId : null;
+  });
+
   const [showPrintHint, setShowPrintHint] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
   
   const [syncStatus, setSyncStatus] = useState<'idle' | 'saving' | 'synced' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isInitializing, setIsInitializing] = useState(true);
+  const [isInitializing, setIsInitializing] = useState(!planId); // 如果本地有 ID，就不显示全屏 Loading
   
   const heroInputRef = useRef<HTMLInputElement>(null);
 
@@ -24,9 +37,9 @@ const App: React.FC = () => {
   useEffect(() => {
     const initSession = async () => {
       try {
-        setSyncStatus('saving');
+        if (!planId) setSyncStatus('saving');
         
-        // 1. 尝试获取最新的一个存档（按 ID 倒序，取最大的那个）
+        // 尝试获取最新的一个存档
         const { data: existingRows, error: fetchError } = await supabase
           .from('travel_plans')
           .select('id, data')
@@ -39,47 +52,43 @@ const App: React.FC = () => {
         let currentData: TravelData;
 
         if (existingRows && existingRows.length > 0) {
-          // A. 找到了现有存档 -> 使用它
+          // A. 找到了现有存档
           console.log('Found existing plan:', existingRows[0]);
           currentId = existingRows[0].id;
           currentData = existingRows[0].data;
         } else {
-          // B. 没找到存档 -> 创建新的 (注意：不传 ID，让数据库自动生成)
-          console.log('No plan found, creating new one...');
+          // B. 没找到存档 -> 创建新的
+          console.log('Creating new plan...');
           const { data: newRow, error: insertError } = await supabase
             .from('travel_plans')
             .insert({ data: INITIAL_DATA })
-            .select() // 返回新创建的行
+            .select()
             .single();
           
           if (insertError) throw insertError;
-          
-          console.log('Created new plan:', newRow);
           currentId = newRow.id;
           currentData = newRow.data;
         }
 
-        // 数据结构兼容性检查
+        // 兼容性处理
         if (currentData && !currentData.sections) {
-           console.log('Migrating data format...');
-           currentData = {
-              heroImage: INITIAL_DATA.heroImage,
-              sections: currentData as any 
-           };
-           // 顺便把升级后的数据写回去，防止下次还要升级
-           await supabase.from('travel_plans').update({ data: currentData }).eq('id', currentId);
+           currentData = { heroImage: INITIAL_DATA.heroImage, sections: currentData as any };
         }
 
+        // 更新状态和本地缓存
         setPlanId(currentId);
-        setData(currentData || INITIAL_DATA);
+        setData(currentData);
+        localStorage.setItem(LS_KEY_ID, String(currentId));
+        localStorage.setItem(LS_KEY_DATA, JSON.stringify(currentData));
+        
         setSyncStatus('synced');
         setErrorMessage(null);
 
       } catch (error: any) {
         console.error('Initialization error:', error);
         setSyncStatus('error');
-        setErrorMessage(error.message || '初始化失败，请刷新重试');
-        // 出错时保留本地初始数据，让用户至少能看
+        // 即使出错，因为我们从 localStorage 读取了数据，用户依然可以看，只是不能同步
+        setErrorMessage('无法连接云端，目前显示的是本地缓存内容');
       } finally {
         setIsInitializing(false);
       }
@@ -90,52 +99,57 @@ const App: React.FC = () => {
 
   // 实时同步监听
   useEffect(() => {
-    if (!planId) return; // 只有拿到 ID 后才开始监听
+    if (!planId) return;
 
-    console.log(`Subscribing to plan:${planId}`);
-    const subscription = supabase
-      .channel(`plan:${planId}`)
+    console.log(`Subscribing to realtime changes for plan ID: ${planId}`);
+    
+    const channel = supabase
+      .channel('travel_plan_sync') // 使用固定的 Channel 名，避免频繁重建
       .on('postgres_changes', { 
-          event: '*', // 监听所有事件
+          event: '*', // 监听所有事件 (INSERT/UPDATE)
           schema: 'public', 
           table: 'travel_plans', 
           filter: `id=eq.${planId}` 
       }, (payload) => {
+        // 收到数据库变更
         if (payload.new && (payload.new as any).data) {
-          console.log('Remote update received:', (payload.new as any).data);
+          console.log('Remote update received!');
           const newData = (payload.new as any).data;
           
-          // 接收端也做一次简单兼容
-          if (!newData.sections) {
-             setData({ heroImage: INITIAL_DATA.heroImage, sections: newData });
-          } else {
-             setData(newData);
-          }
+          // 兼容旧数据
+          const finalData = !newData.sections 
+            ? { heroImage: INITIAL_DATA.heroImage, sections: newData } 
+            : newData;
+
+          setData(finalData);
+          localStorage.setItem(LS_KEY_DATA, JSON.stringify(finalData)); // 更新缓存
           setSyncStatus('synced');
         }
       })
-      .subscribe();
+      .subscribe((status) => {
+        console.log('Subscription status:', status);
+        if (status === 'SUBSCRIBED') {
+            setSyncStatus('synced');
+        }
+      });
 
     return () => {
-      supabase.removeChannel(subscription);
+      supabase.removeChannel(channel);
     };
   }, [planId]);
 
   // 保存数据
   const saveData = async (newData: TravelData) => {
-    // 乐观更新
+    // 1. 乐观更新：立即更新 UI 和 本地缓存
     setData(newData);
+    localStorage.setItem(LS_KEY_DATA, JSON.stringify(newData));
     setSyncStatus('saving');
     setErrorMessage(null);
 
-    // 如果还没有 ID (正在初始化中)，暂时只更新本地，不发请求，防止报错
-    if (!planId) {
-        console.warn('Cannot save to cloud yet, no planId');
-        return;
-    }
+    if (!planId) return;
 
     try {
-      // 使用 UPDATE，因为我们已经确保 ID 存在了
+      // 2. 发送到云端
       const { error } = await supabase
         .from('travel_plans')
         .update({ data: newData })
@@ -220,7 +234,7 @@ const App: React.FC = () => {
     return (
         <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-500 gap-4">
             <Loader2 className="w-10 h-10 animate-spin text-ice-500" />
-            <p className="text-sm font-medium">正在连接云端行程库...</p>
+            <p className="text-sm font-medium">正在恢复云端行程...</p>
         </div>
     );
   }
@@ -228,7 +242,6 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen pb-20 bg-slate-50">
       
-      {/* Error Banner */}
       {errorMessage && (
         <div className="bg-red-500 text-white text-sm py-2 px-4 text-center font-bold sticky top-0 z-[100] flex items-center justify-center gap-2 shadow-md animate-in slide-in-from-top">
             <WifiOff className="w-4 h-4" />
@@ -247,7 +260,6 @@ const App: React.FC = () => {
           <div className="absolute inset-0 bg-gradient-to-b from-transparent via-slate-900/60 to-slate-50"></div>
         </div>
 
-        {/* Hero Edit Button */}
         <input 
             type="file" 
             ref={heroInputRef}
@@ -263,7 +275,6 @@ const App: React.FC = () => {
             <Camera className="w-5 h-5" />
         </button>
         
-        {/* Sync Status Indicator */}
         <div className="absolute top-4 right-4 z-20 flex items-center gap-2 bg-black/30 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/20 text-xs">
            {syncStatus === 'saving' && <><RefreshCw className="w-3 h-3 animate-spin" /> <span>同步中...</span></>}
            {syncStatus === 'synced' && <><Cloud className="w-3 h-3 text-green-400" /> <span>已同步</span></>}
@@ -324,7 +335,6 @@ const App: React.FC = () => {
               />
             ))}
             
-            {/* Add Item Button */}
             <button 
                 onClick={() => handleAddItem(activeTab)}
                 className="w-full py-4 border-2 border-dashed border-slate-300 rounded-lg text-slate-400 hover:border-ice-400 hover:text-ice-500 hover:bg-ice-50 transition-all flex items-center justify-center gap-2 group"
@@ -334,7 +344,6 @@ const App: React.FC = () => {
             </button>
           </div>
 
-          {/* Print View */}
           <div className="hidden print:block space-y-8">
              {tabs.map(tab => {
                const section = data.sections[tab.id];
@@ -364,7 +373,6 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        {/* Floating Actions */}
         <div className="fixed bottom-6 right-6 flex flex-col gap-3 no-print z-40">
            <button 
             onClick={() => setShowShareModal(true)}
@@ -382,14 +390,12 @@ const App: React.FC = () => {
           </button>
         </div>
 
-        {/* Print Hint */}
         {showPrintHint && (
             <div className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-black/80 text-white px-6 py-4 rounded-lg shadow-2xl z-50 no-print backdrop-blur-sm">
                 <p className="text-center font-medium">正在生成打印视图...<br/><span className="text-sm text-gray-300">推荐在打印设置中选择"横向"或"缩放"以适应纸张</span></p>
             </div>
         )}
 
-        {/* Share Modal */}
         {showShareModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center px-4 no-print">
             <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShowShareModal(false)}></div>
